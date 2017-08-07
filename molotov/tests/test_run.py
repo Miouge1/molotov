@@ -320,7 +320,7 @@ class TestRunner(TestLoop):
             # we have 5 workers and a ramp-up
             # the first one starts immediatly, then each worker
             # sleeps 2 seconds more.
-            delay = [d for d in delay if d != 0]
+            delay = [d for d in delay if d not in (0, .1)]
             self.assertEqual(delay, [2.0, 4.0, 6.0, 8.0])
             wanted = "SUCCESSES: 10"
             self.assertTrue(wanted in stdout)

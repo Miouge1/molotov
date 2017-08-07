@@ -159,9 +159,9 @@ def teardown():
 
     - **worker_id** the worker number
 
-    *The decorated function should not be a coroutine.*
+    *The decorated function should be a coroutine.*
     """
-    return _fixture('teardown', coroutine=False)
+    return _fixture('teardown')
 
 
 def global_teardown():

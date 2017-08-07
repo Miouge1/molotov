@@ -31,10 +31,10 @@ async def worker_starts(worker_id, args):
 
 
 @teardown()
-def worker_ends(worker_id):
+async def worker_ends(worker_id):
     """ This functions is called when the worker is done.
 
-    Notice that it's not a coroutine.
+    Notice that it's a coroutine.
     """
     pass
 

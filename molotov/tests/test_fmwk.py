@@ -220,7 +220,7 @@ class TestFmwk(TestLoop):
         res = []
 
         @teardown()
-        def _worker_teardown(num):
+        async def _worker_teardown(num):
             res.append('BYE WORKER')
 
         @global_teardown()
@@ -241,7 +241,7 @@ class TestFmwk(TestLoop):
     @dedicatedloop
     def test_shutdown_exception(self):
         @teardown()
-        def _worker_teardown(num):
+        async def _worker_teardown(num):
             raise Exception('bleh')
 
         @global_teardown()
@@ -308,7 +308,7 @@ class TestFmwk(TestLoop):
     def test_teardown_exception(self):
 
         @teardown()
-        def _teardown(args):
+        async def _teardown(args):
             raise Exception('bleh')
 
         @scenario(weight=100)
@@ -333,3 +333,16 @@ class TestFmwk(TestLoop):
         args = self.get_args()
         results = runner(args)
         self.assertEqual(results['OK'], 0)
+
+    @async_test
+    async def test_cancelled(self, loop, console):
+
+        @scenario(weight=100)
+        async def test_failing(session):
+            raise asyncio.CancelledError()
+
+        args = self.get_args(console=console)
+        statsd = None
+
+        await worker(1, loop, args, statsd, delay=0)
+        self.assertTrue(fmwk._RESULTS['OK'] == 0)

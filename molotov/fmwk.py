@@ -4,6 +4,7 @@ import multiprocessing
 import asyncio
 import time
 import os
+from contextlib import suppress
 
 from molotov.session import LoggedClientSession as Session
 from molotov.api import get_fixture, pick_scenario, get_scenario
@@ -75,7 +76,10 @@ def _reached_tolerance(current_time, args):
         # we don't have enough samples
         return False
 
-    current_ratio = float(FAILED) / float(OK) * 100.
+    if OK == 0:
+        current_ratio = 100
+    else:
+        current_ratio = float(FAILED) / float(OK) * 100.
     reached = current_ratio > args.sizing_tolerance
     if reached:
         _RESULTS['REACHED'] = 1
@@ -86,11 +90,24 @@ def _reached_tolerance(current_time, args):
 
 async def worker(num, loop, args, statsd, delay):
     if delay > 0.:
-        await asyncio.sleep(delay)
+        subdelay = round(float(delay) / .1)
+        for i in range(subdelay):
+            await asyncio.sleep(.1)
+            if _STOP:
+                return
+    if _STOP:
+        return
     _RESULTS['WORKER'] += 1
     try:
         return await _worker(num, loop, args, statsd, delay)
     finally:
+        teardown = get_fixture('teardown')
+        if teardown is not None:
+            try:
+                await teardown(num)
+            except Exception as e:
+                # we can't stop the teardown process
+                console.print_error(e)
         _RESULTS['WORKER'] -= 1
 
 
@@ -156,7 +173,7 @@ async def _worker(num, loop, args, statsd, delay):
 
             if _reached_tolerance(current_time, args):
                 _STOP = True
-                os.kill(os.getpid(), signal.SIGINT)
+                break
 
             count += 1
             if args.delay > 0.:
@@ -172,17 +189,6 @@ async def _worker(num, loop, args, statsd, delay):
                 # we can't stop the teardown process
                 console.print_error(e)
 
-
-def _worker_done(num, console, future):
-    teardown = get_fixture('teardown')
-    if teardown is not None:
-        try:
-            teardown(num)
-        except Exception as e:
-            # we can't stop the teardown process
-            console.print_error(e)
-
-
 def _runner(loop, args, statsd):
     def _prepare():
         tasks = []
@@ -193,12 +199,8 @@ def _runner(loop, args, statsd):
             step = 0.
         for i in range(args.workers):
             f = worker(i, loop, args, statsd, delay)
-            future = asyncio.ensure_future(f)
-            future.add_done_callback(partial(_worker_done, i,
-                                             args.shared_console))
-            tasks.append(future)
+            tasks.append(asyncio.ensure_future(f))
             delay += step
-
         return tasks
 
     if args.quiet:
@@ -243,47 +245,37 @@ def _process(args):
     else:
         statsd = None
 
-    _TASKS.extend(co_tasks)
     co_tasks = asyncio.gather(*co_tasks, loop=loop, return_exceptions=True)
 
     workers = _runner(loop, args, statsd)
     run_task = asyncio.gather(*workers, loop=loop, return_exceptions=True)
-    _TASKS.extend(workers)
 
     try:
         loop.run_until_complete(run_task)
         _STOP = True
-    except asyncio.CancelledError:
-        _STOP = True
-        co_tasks.cancel()
-        loop.run_until_complete(co_tasks)
-        run_task.cancel()
-        loop.run_until_complete(run_task)
+        # clean up all pending tasks
+        for task in asyncio.Task.all_tasks():
+            if task.done():
+                continue
+            with suppress(RuntimeError):
+                task.cancel()
+            with suppress(asyncio.CancelledError):
+                loop.run_until_complete(task)
     finally:
         console.stop()
-        loop.run_until_complete(co_tasks)
         if statsd is not None:
             statsd.close()
-        for task in _TASKS:
-            del task
         loop.close()
 
 
 _PROCESSES = []
-_TASKS = []
 
 
 def _shutdown(signal, frame):
+    # just tell the world to stop
     global _STOP
     _STOP = True
-
-    for task in _TASKS:
-        try:
-            task.cancel()
-        except RuntimeError:
-            pass
-
-    # send sigterms
+    # and send sigterms
     for proc in _PROCESSES:
         proc.terminate()
 

@@ -26,7 +26,7 @@ async def init_worker(worker_num, args):
 
 
 @teardown()
-def end_worker(worker_num):
+async def end_worker(worker_num):
     print("This is the end for %d" % worker_num)
 
 
