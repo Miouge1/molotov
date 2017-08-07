@@ -257,6 +257,7 @@ def _process(args):
         for task in asyncio.Task.all_tasks():
             if task.done():
                 continue
+            print(task)
             with suppress(RuntimeError):
                 task.cancel()
             with suppress(asyncio.CancelledError):
@@ -264,7 +265,8 @@ def _process(args):
     finally:
         console.stop()
         if statsd is not None:
-            statsd.close()
+            with suppress(AttributeError):
+                statsd.close()
         loop.close()
 
 

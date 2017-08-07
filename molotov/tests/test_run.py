@@ -3,7 +3,7 @@ import os
 import asyncio
 from unittest.mock import patch
 
-from molotov.api import scenario, global_setup
+from molotov.api import scenario, global_setup, teardown, setup
 from molotov.tests.support import (TestLoop, coserver, dedicatedloop, set_args,
                                    skip_pypy, only_pypy)
 from molotov.tests.statsd import UDPServer
@@ -80,6 +80,22 @@ class TestRunner(TestLoop):
             grab_json = json_request('http://localhost:8888/molotov.json')
             self.assertTrue('molotov' in grab_json['content'])
 
+
+        server = UDPServer('127.0.0.1', 9999, loop=test_loop)
+        udp_stop = asyncio.Event()
+
+        async def start_udp():
+            await server.run()
+
+        _start_udp = asyncio.ensure_future(start_udp())
+
+
+        async def stop_udp():
+            await udp_stop.wait()
+            await server.stop()
+
+        _stop_udp = asyncio.ensure_future(stop_udp())
+
         @scenario(weight=10)
         async def here_one(session):
             async with session.get('http://localhost:8888') as resp:
@@ -93,24 +109,14 @@ class TestRunner(TestLoop):
             _RES.append(2)
 
         args = self._get_args()
-        server = UDPServer('127.0.0.1', 9999, loop=test_loop)
-        _stop = asyncio.Future()
-
-        async def stop():
-            await _stop
-            await server.stop()
-
-        server_task = asyncio.ensure_future(server.run())
-        stop_task = asyncio.ensure_future(stop())
 
         with coserver():
             run(args)
 
-        _stop.set_result(True)
-        test_loop.run_until_complete(asyncio.gather(server_task, stop_task))
+        udp_stop.set()
+        #test_loop.run_until_complete(asyncio.gather(_start_udp, _stop_udp))
 
         self.assertTrue(len(_RES) > 0)
-
         udp = server.flush()
         self.assertTrue(len(udp) > 0)
         test_loop._close()
@@ -320,8 +326,14 @@ class TestRunner(TestLoop):
             # we have 5 workers and a ramp-up
             # the first one starts immediatly, then each worker
             # sleeps 2 seconds more.
-            delay = [d for d in delay if d not in (0, .1)]
-            self.assertEqual(delay, [2.0, 4.0, 6.0, 8.0])
+            delay = [d for d in delay if d != 0]
+
+            # each timer is split in 0.1
+            wanted = []
+            for timer in [2.0, 4.0, 6.0, 8.0]:
+                howmany = round(timer/.1)
+                wanted += [.1] * howmany
+            self.assertEqual(delay, wanted)
             wanted = "SUCCESSES: 10"
             self.assertTrue(wanted in stdout)
 
